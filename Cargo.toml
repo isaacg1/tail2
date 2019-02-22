@@ -1,0 +1,9 @@
+[package]
+name = "tail2"
+version = "0.1.0"
+authors = ["Isaac Grosof <igrosof@cmu.edu>"]
+edition = "2018"
+
+[dependencies]
+rand = "0.6.1"
+noisy_float = "*"
