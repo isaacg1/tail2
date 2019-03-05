@@ -9,6 +9,8 @@ use noisy_float::prelude::*;
 
 use std::f64::INFINITY;
 
+use std::collections::HashSet;
+
 const EPSILON: f64 = 1e-10;
 
 enum BST<T>
@@ -80,6 +82,7 @@ impl<T: Ord> BST<T> {
     }
 }
 
+#[derive(Debug)]
 struct Job {
     size: f64,
     rem_size: f64,
@@ -126,6 +129,8 @@ enum Policy {
     DelayLarge(f64),
     DelayLargeOrOld(f64, f64),
     DynamicLargeOrOld(f64),
+    MooreSRPT(f64),
+    MooreFCFS(f64),
 }
 
 impl Policy {
@@ -192,6 +197,149 @@ impl Policy {
                     out[best.0] = 1.0;
                 }
                 out
+            }
+            Policy::MooreFCFS(p) => {
+                if queue.len() == 0 {
+                    vec![]
+                } else {
+                    let time_index = (latencies.len() as f64 * p) as usize;
+                    let time_threshold =
+                        latencies.nth(time_index).cloned().unwrap_or(n64(INFINITY));
+                    let mut ordered_jobs: Vec<(usize, &Job)> = queue
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, j)| {
+                            n64(current_time - j.arrival_time + j.rem_size) <= time_threshold
+                        })
+                        .collect();
+                    ordered_jobs.sort_by_key(|(_, j)| n64(j.arrival_time));
+                    let mut removed_indices: HashSet<usize> = HashSet::new();
+                    let mut current_sum = 0.0;
+                    let mut i = 0;
+                    while i < ordered_jobs.len() {
+                        let j = &ordered_jobs[i].1;
+                        current_sum += j.rem_size;
+                        let j_deadline = time_threshold - (current_time - j.arrival_time);
+                        if n64(current_sum) >= j_deadline {
+                            let removed_index = (0..=i)
+                                .filter(|index| !removed_indices.contains(index))
+                                .max_by_key(|&index| n64(ordered_jobs[index].1.rem_size))
+                                .unwrap();
+                            let was_absent = removed_indices.insert(removed_index);
+                            assert!(was_absent);
+                            assert!(removed_index <= i);
+                            current_sum -= ordered_jobs[removed_index].1.rem_size;
+                            assert!(n64(current_sum) < j_deadline);
+                        }
+                        i += 1;
+                    }
+                    let choice = ordered_jobs
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !removed_indices.contains(&i))
+                        .next()
+                        .map_or_else(
+                            || {
+                            // Fallback to SRPT
+                            queue
+                                .iter()
+                                .enumerate()
+                                .min_by_key(|(_, j)| n64(j.rem_size))
+                                .unwrap()
+                                .0
+                            },
+                            |(_, (i, _))|
+                                // Extract original index
+                                *i,
+                        );
+                    let mut out = vec![0.0; queue.len()];
+                    out[choice] = 1.0;
+                    out
+                }
+            }
+            Policy::MooreSRPT(p) => {
+                if queue.len() == 0 {
+                    vec![]
+                } else {
+                    /*
+                    if latencies.len() < (10.0 / (1.0 - p)) as usize {
+                        let smallest = queue
+                            .iter()
+                            .enumerate()
+                            .min_by_key(|(_, j)| n64(j.rem_size))
+                            .unwrap()
+                            .0;
+                        let mut out = vec![0.0; queue.len()];
+                        out[smallest] = 1.0;
+                        out
+                    } else {*/
+                        let time_index = (latencies.len() as f64 * p) as usize;
+                        let time_threshold =
+                            latencies.nth(time_index).cloned().unwrap_or(n64(INFINITY));
+                        let mut ordered_jobs: Vec<(usize, &Job)> = queue
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, j)| {
+                                n64(current_time - j.arrival_time + j.rem_size) <= time_threshold
+                            })
+                            .collect();
+                        ordered_jobs.sort_by_key(|(_, j)| n64(j.rem_size));
+                        let index = loop {
+                            let mut time_spent = 0.0;
+                            let mut reorder_at = None;
+                            for (i, (_, job)) in ordered_jobs.iter().enumerate() {
+                                time_spent += job.rem_size;
+                                if n64(current_time - job.arrival_time + time_spent)
+                                    > time_threshold
+                                {
+                                    reorder_at = Some(i);
+                                    break;
+                                }
+                            }
+                            if let Some(position) = reorder_at {
+                                let potential_removal_id = ordered_jobs[position].0;
+                                // Ordered jobs sort up to position
+                                let helper = &mut ordered_jobs[..=position];
+                                helper.sort_by_key(|(_, j)| n64(j.arrival_time));
+                                // Check whether all good up to position.
+                                let mut all_good = true;
+                                let mut time_spent = 0.0;
+                                for (_, j) in helper {
+                                    time_spent += j.rem_size;
+                                    if n64(current_time - j.arrival_time + time_spent)
+                                        > time_threshold
+                                    {
+                                        all_good = false;
+                                        break;
+                                    }
+                                }
+                                if !all_good {
+                                    let removal_position = ordered_jobs
+                                        .iter()
+                                        .position(|(i, _)| *i == potential_removal_id)
+                                        .unwrap();
+                                    ordered_jobs.remove(removal_position);
+                                }
+                            } else {
+                                // Arbitrary fallback to SRPT if everything fails
+                                break ordered_jobs.first().map_or_else(
+                                    || {
+                                        queue
+                                            .iter()
+                                            .enumerate()
+                                            .min_by_key(|(_, j)| n64(j.rem_size))
+                                            .unwrap()
+                                            .0
+                                    },
+                                    |t| t.0,
+                                );
+                            }
+                        };
+                        let mut out = vec![0.0; queue.len()];
+                        out[index] = 1.0;
+                        out
+                    //}
+                }
             }
             Policy::DynamicLargeOrOld(p) => {
                 let time_index = (latencies.len() as f64 * p) as usize;
@@ -403,10 +551,9 @@ fn simulate(
 fn main() {
     let percentile = 0.99;
     let seed = 0;
-    let time = 1e6;
+    let time = 1e7;
     let policies = vec![
         Policy::FCFS,
-        Policy::PS,
         Policy::SRPT,
         Policy::FB,
         Policy::DelayLarge(percentile),
@@ -416,6 +563,8 @@ fn main() {
         Policy::DelayLargeOrOld(percentile, percentile + (1.0 - percentile) * 0.75),
         Policy::DelayLargeOrOld(percentile, 1.0),
         Policy::DynamicLargeOrOld(percentile),
+        Policy::MooreSRPT(percentile),
+        Policy::MooreFCFS(percentile),
     ];
     println!("per={},seed={},time={}", percentile, seed, time);
     println!(
