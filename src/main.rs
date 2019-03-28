@@ -90,6 +90,7 @@ struct Job {
     size: f64,
     rem_size: f64,
     arrival_time: f64,
+    data: Option<f64>,
 }
 
 impl Job {
@@ -99,6 +100,16 @@ impl Job {
             size,
             rem_size: size,
             arrival_time: time,
+            data: None,
+        }
+    }
+    fn new_with_data(size: f64, time: f64, id: usize, data: f64) -> Self {
+        Self {
+            id,
+            size,
+            rem_size: size,
+            arrival_time: time,
+            data: Some(data),
         }
     }
 }
@@ -109,6 +120,7 @@ struct Completion {
     size: f64,
     response_time: f64,
     arrival_time: f64,
+    data: Option<f64>,
 }
 
 impl Completion {
@@ -119,6 +131,7 @@ impl Completion {
             size: job.size,
             response_time: time - job.arrival_time,
             arrival_time: job.arrival_time,
+            data: job.data,
         }
     }
 }
@@ -1201,7 +1214,17 @@ fn simulate(
             arrival_increment = arrival_generator.sample(&mut rng);
             if current_time < end_time {
                 let new_size = size_dist.sample(&mut rng);
-                queue.push(Job::new(new_size, current_time, current_id));
+                if true {
+                    let work: f64 = queue.iter().map(|j| j.rem_size).sum();
+                    queue.push(Job::new_with_data(
+                        new_size,
+                        current_time,
+                        current_id,
+                        work + new_size,
+                    ))
+                } else {
+                    queue.push(Job::new(new_size, current_time, current_id));
+                }
                 sizes.insert(n64(new_size));
                 current_id += 1;
             }
@@ -1276,19 +1299,20 @@ fn single_percentile() {
 fn many_rhos() {
     let seed = 0;
     let time = 1e6;
-    let targets: Vec<Target> = vec![Target::Time(100.0)];
+    let targets: Vec<Target> = vec![Target::Time(1000.0)];
 
     let print_percentiles = false;
     for &target in &targets {
         println!("target={:?}, seed={}, time={}", target, seed, time);
         let policies = vec![
-            //Policy::Ejector(Target::Time(100.0)),
-            //Policy::SRPT,
-            //Policy::MooreG(Target::Time(arbitrary_number), Ranker::FCFS, Ranker::SRPT),
-            //Policy::OldestUnexchangableMulti(Target::Time(100.0)),
-            //Policy::SmallestLate(Target::Time(95.0)),
-            Policy::SmallestLateSimple(Target::Time(90.0)),
-            //Policy::FCFS,
+            Policy::Ejector(target),
+            Policy::MooreG(target, Ranker::FCFS, Ranker::SRPT),
+            Policy::DelayLarge(0.9999),
+            Policy::FCFS,
+            Policy::SRPT,
+            Policy::SmallestLateSimple(target),
+            //Policy::SmallestLate(target),
+            //Policy::OldestUnexchangableMulti(target),
         ];
         let rhos = vec![0.99];
         let vars = vec![4.0];
@@ -1317,16 +1341,18 @@ fn many_rhos() {
                     .collect();
                 let mut policy_names: Vec<String> =
                     policies.iter().map(|p| format!("{:?}", p)).collect();
-                if let Target::Time(t) = target {
-                    let arrivals = completionss
-                        .get(0)
-                        .expect("At least one policy")
-                        .iter()
-                        .map(|c| Arrival::from_completion(c))
-                        .collect();
-                    let opt_completions = opt(arrivals, t);
-                    completionss.push(opt_completions);
-                    policy_names.push("OPT_FCFS".to_string());
+                if false {
+                    if let Target::Time(t) = target {
+                        let arrivals = completionss
+                            .get(0)
+                            .expect("At least one policy")
+                            .iter()
+                            .map(|c| Arrival::from_completion(c))
+                            .collect();
+                        let opt_completions = opt(arrivals, t);
+                        completionss.push(opt_completions);
+                        policy_names.push("OPT_FCFS".to_string());
+                    }
                 }
                 completionss
                     .iter_mut()
@@ -1353,7 +1379,7 @@ fn many_rhos() {
                     let mean_metric = true;
                     let fraction_metric = false;
                     if fraction_metric {
-                        println!("Fraction late");
+                        println!("Fraction on time");
                         for (completions, p) in completionss.iter().zip(&policy_names) {
                             let index = match completions
                                 .binary_search_by_key(&n64(t), |c| n64(c.response_time))
@@ -1372,6 +1398,22 @@ fn many_rhos() {
                                 .map(|c| (c.response_time - t).max(0.0))
                                 .sum();
                             println!("'{}',{}", p, total_tardiness / completions.len() as f64);
+                            if p == "SRPT" {
+                                let bound_tardiness: f64 = completions
+                                    .iter()
+                                    .map(|c| {
+                                        if c.data.unwrap() <= t {
+                                            0.0
+                                        } else {
+                                            c.response_time
+                                        }
+                                    })
+                                    .sum();
+                                println!(
+                                    "'SRPT based bound',{}",
+                                    bound_tardiness / completions.len() as f64
+                                );
+                            }
                         }
                         if false {
                             let arrivals: Vec<Arrival> = completionss
@@ -1397,6 +1439,26 @@ fn many_rhos() {
                             above[0].response_time,
                             sum_above / above.len() as f64
                         );
+                        if policy == "SRPT" {
+                            let mut bound_tardiness: Vec<f64> = completions
+                                .iter()
+                                .map(|c| {
+                                    if c.data.unwrap() <= 100.0 {
+                                        0.0
+                                    } else {
+                                        c.response_time + 100.0
+                                    }
+                                })
+                                .collect();
+                            bound_tardiness.sort_by_key(|&f| n64(f));
+                            let above = &bound_tardiness[index..];
+                            let sum_above: f64 = above.iter().sum();
+                            println!(
+                                "'SRPT based bound',{},{}",
+                                above[0],
+                                sum_above / above.len() as f64
+                            );
+                        }
                     }
                 }
             }
