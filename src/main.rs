@@ -1299,18 +1299,19 @@ fn single_percentile() {
 fn many_rhos() {
     let seed = 0;
     let time = 1e6;
-    let targets: Vec<Target> = vec![Target::Time(1000.0)];
+    let targets: Vec<Target> = vec![Target::Percentile(0.99)];
 
     let print_percentiles = false;
     for &target in &targets {
         println!("target={:?}, seed={}, time={}", target, seed, time);
         let policies = vec![
-            Policy::Ejector(target),
-            Policy::MooreG(target, Ranker::FCFS, Ranker::SRPT),
-            Policy::DelayLarge(0.9999),
-            Policy::FCFS,
+            //Policy::Ejector(target),
+            //Policy::MooreG(target, Ranker::FCFS, Ranker::SRPT),
+            //Policy::DelayLarge(0.9999),
+            //Policy::FCFS,
             Policy::SRPT,
-            Policy::SmallestLateSimple(target),
+            Policy::SmallestLateSimple(Target::Time(600.0)),
+            Policy::SmallestLateSimple(Target::Time(1000.0)),
             //Policy::SmallestLate(target),
             //Policy::OldestUnexchangableMulti(target),
         ];
@@ -1429,35 +1430,39 @@ fn many_rhos() {
                 }
                 if let Target::Percentile(perc) = target {
                     println!("policy,min,mean");
-                    for (completions, policy) in completionss.iter().zip(&policy_names) {
+                    for (completions, policy) in completionss.iter().zip(&policies) {
                         let index = ((completions.len() as f64) * perc) as usize;
                         let above = &completions[index..];
                         let sum_above: f64 = above.iter().map(|c| c.response_time).sum();
                         println!(
-                            "'{}',{},{}",
+                            "'{:?}',{},{}",
                             policy,
                             above[0].response_time,
                             sum_above / above.len() as f64
                         );
-                        if policy == "SRPT" {
-                            let mut bound_tardiness: Vec<f64> = completions
-                                .iter()
-                                .map(|c| {
-                                    if c.data.unwrap() <= 100.0 {
-                                        0.0
-                                    } else {
-                                        c.response_time + 100.0
-                                    }
-                                })
-                                .collect();
-                            bound_tardiness.sort_by_key(|&f| n64(f));
-                            let above = &bound_tardiness[index..];
-                            let sum_above: f64 = above.iter().sum();
-                            println!(
-                                "'SRPT based bound',{},{}",
-                                above[0],
-                                sum_above / above.len() as f64
-                            );
+                        if let Policy::SmallestLateSimple(Target::Time(threshold)) = policy {
+                            if let Some(srpt_index) = policy_names.iter().position(|n| n == &"SRPT") {
+                                let srpt_completions = &completionss[srpt_index];
+                                let mut bound_tardiness: Vec<f64> = srpt_completions
+                                    .iter()
+                                    .map(|c| {
+                                        if c.data.unwrap() <= *threshold {
+                                            0.0
+                                        } else {
+                                            c.response_time + threshold
+                                        }
+                                    })
+                                    .collect();
+                                bound_tardiness.sort_by_key(|&f| n64(f));
+                                let above = &bound_tardiness[index..];
+                                let sum_above: f64 = above.iter().sum();
+                                println!(
+                                    "'SRPT based bound c={}',{},{}",
+                                    threshold,
+                                    above[0],
+                                    sum_above / above.len() as f64
+                                );
+                            }
                         }
                     }
                 }

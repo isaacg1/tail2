@@ -1,0 +1,13 @@
+1. T > c policy:
+  a. Analysis:
+     j of size x has:
+     If W_j + x < c: T_j = W_j + x
+     else:           T_j <= T_j^SRPT + c
+     i. To theoretically analyze this, we need T_j^SRPT conditionied on W_j.
+  b. Simulation :)
+2. Simulate lots of policies, lots of metrics. Both percentile aware and percentle unaware.
+3. Lower bound:
+  a. Tardiness:
+     i. Minimum number tardy at any point in time in any policy. 2-3x better than best online found.
+        A. Faster?
+4. SOAP hybrid: Not particularly impressive :)
