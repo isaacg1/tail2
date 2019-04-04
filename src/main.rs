@@ -1298,7 +1298,7 @@ fn single_percentile() {
 
 fn many_rhos() {
     let seed = 0;
-    let time = 1e6;
+    let time = 1e8;
     let targets: Vec<Target> = vec![Target::Percentile(0.99)];
 
     let print_percentiles = false;
@@ -1441,7 +1441,9 @@ fn many_rhos() {
                             sum_above / above.len() as f64
                         );
                         if let Policy::SmallestLateSimple(Target::Time(threshold)) = policy {
-                            if let Some(srpt_index) = policy_names.iter().position(|n| n == &"SRPT") {
+                            if let Some(srpt_index) = policy_names.iter().position(|n| n == &"SRPT")
+                            {
+                                {
                                 let srpt_completions = &completionss[srpt_index];
                                 let mut bound_tardiness: Vec<f64> = srpt_completions
                                     .iter()
@@ -1461,6 +1463,39 @@ fn many_rhos() {
                                     threshold,
                                     above[0],
                                     sum_above / above.len() as f64
+                                );
+                                }
+                                let mut combined_bound = vec![];
+                                let num_partitions = 1000000;
+                                let mut srpt_completions: Vec<&Completion> = completionss[srpt_index].iter().collect();
+                                srpt_completions.sort_by_key(|c| n64(c.size));
+                                let part_index = &|p| srpt_completions.len() * p / num_partitions;
+                                for part_num in 0..num_partitions {
+                                    let mut partition: Vec<&Completion> = srpt_completions
+                                        [part_index(part_num)..part_index(part_num + 1)].to_vec();
+                                    partition.sort_by_key(|c| n64(c.response_time));
+                                    let early_in_partition = partition
+                                        .iter()
+                                        .filter(|c| c.data.unwrap() <= *threshold)
+                                        .count();
+                                    combined_bound.extend(partition.iter().enumerate().map(
+                                        |(i, c)| {
+                                            if i < early_in_partition {
+                                                *threshold
+                                            } else {
+                                                c.response_time + threshold
+                                            }
+                                        },
+                                    ));
+                                }
+                                combined_bound.sort_by_key(|&f| n64(f));
+                                let above = &combined_bound[index..];
+                                let sum_above: f64 = above.iter().sum();
+                                println!(
+                                "'Weak SRPT Bound c={}',{},{}",
+                                threshold,
+                                above[0],
+                                sum_above / above.len() as f64
                                 );
                             }
                         }
