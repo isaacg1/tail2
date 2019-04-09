@@ -1,0 +1,7 @@
+I have the 3 part bound.
+If W_j < c - x: T_j = W_j + x
+If Wait_j^{SRPT}_x < c: T_j <= T^{SRPT}_x (This one doesn't happen much, but now we know)
+Else: T_j <= c + T_j^{SRPT}
+If the metric only cares about mean (e.g. Tardiness), then we can replace the last bound with:
+Else: T_j <= c + T_{ss}^{SRPT}
+this isn't much better, but it's easier to analyze.

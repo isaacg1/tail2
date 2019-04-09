@@ -90,7 +90,7 @@ struct Job {
     size: f64,
     rem_size: f64,
     arrival_time: f64,
-    data: Option<f64>,
+    data: Option<(f64, Option<f64>)>,
 }
 
 impl Job {
@@ -103,7 +103,7 @@ impl Job {
             data: None,
         }
     }
-    fn new_with_data(size: f64, time: f64, id: usize, data: f64) -> Self {
+    fn new_with_data(size: f64, time: f64, id: usize, data: (f64, Option<f64>)) -> Self {
         Self {
             id,
             size,
@@ -120,7 +120,7 @@ struct Completion {
     size: f64,
     response_time: f64,
     arrival_time: f64,
-    data: Option<f64>,
+    data: Option<(f64, Option<f64>)>,
 }
 
 impl Completion {
@@ -153,7 +153,7 @@ impl Arrival {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum Ranker {
     SRPT,
     FCFS,
@@ -172,7 +172,7 @@ impl Ranker {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum Target {
     Percentile(f64),
     Time(f64),
@@ -193,9 +193,10 @@ impl Target {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum Policy {
     SRPT,
+    PSJF,
     FCFS,
     PS,
     Undominated,
@@ -221,6 +222,7 @@ enum Policy {
     OldestUnexchangableMulti(Target),
     SmallestLate(Target),
     SmallestLateSimple(Target),
+    SLSPSJF(Target),
 }
 
 impl Policy {
@@ -236,6 +238,7 @@ impl Policy {
     ) -> Vec<f64> {
         match &self {
             Policy::SRPT
+            | Policy::PSJF
             | Policy::FCFS
             | Policy::TRR
             | Policy::FB
@@ -245,10 +248,12 @@ impl Policy {
             | Policy::SRPTEject(_)
             | Policy::SmallestLate(_)
             | Policy::SmallestLateSimple(_)
+            | Policy::SLSPSJF(_)
             | Policy::DelayLargeOrOld(_, _) => {
                 let best = queue.iter().enumerate().min_by_key(|(_i, job)| {
                     n64(match &self {
                         Policy::SRPT => job.rem_size,
+                        Policy::PSJF => job.size,
                         Policy::FCFS => job.arrival_time,
                         Policy::TRR => job.rem_size / (current_time - job.arrival_time),
                         // Approximate FB
@@ -316,6 +321,14 @@ impl Policy {
                             let time_threshold = t.eval(&latencies);
                             if n64(current_time - job.arrival_time) > time_threshold {
                                 job.rem_size
+                            } else {
+                                job.arrival_time
+                            }
+                        }
+                        Policy::SLSPSJF(t) => {
+                            let time_threshold = t.eval(&latencies);
+                            if n64(current_time - job.arrival_time) > time_threshold {
+                                job.size
                             } else {
                                 job.arrival_time
                             }
@@ -736,7 +749,7 @@ impl Policy {
                         .iter()
                         .max_by_key(|j| n64(j.arrival_time))
                         .expect("Something made it go over");
-                    assert!(queue_size - new.rem_size <= time_threshold);
+                    //assert!(queue_size - new.rem_size <= time_threshold);
                     scratch.insert(new.id);
                 }
                 let maybe_choice = queue.iter().enumerate().min_by_key(|(_, j)| {
@@ -1194,12 +1207,21 @@ fn simulate(
             .min_by_key(|&f| n64(f))
             .unwrap_or(INFINITY);
         let increment = min_job_increment.min(arrival_increment);
+        //let increment = min_job_increment.min(arrival_increment).min(0.01);
         current_time += increment;
         arrival_increment -= increment;
         let mut to_remove = vec![];
         for (i, (job, rate)) in queue.iter_mut().zip(rates).enumerate() {
             job.rem_size -= increment * rate;
+            if let Some(data) = job.data.as_mut() {
+                if job.rem_size < job.size {
+                    if data.1.is_none() {
+                        data.1 = Some(current_time - job.arrival_time);
+                    }
+                }
+            }
             if job.rem_size < EPSILON {
+                assert!(job.data.unwrap().1.is_some());
                 to_remove.push(i);
             }
         }
@@ -1220,7 +1242,7 @@ fn simulate(
                         new_size,
                         current_time,
                         current_id,
-                        work + new_size,
+                        (work, None),
                     ))
                 } else {
                     queue.push(Job::new(new_size, current_time, current_id));
@@ -1297,9 +1319,9 @@ fn single_percentile() {
 */
 
 fn many_rhos() {
-    let seed = 0;
-    let time = 1e8;
-    let targets: Vec<Target> = vec![Target::Percentile(0.99)];
+    let seed = 1;
+    let time = 1e6;
+    let targets: Vec<Target> = vec![Target::Percentile(0.995)];
 
     let print_percentiles = false;
     for &target in &targets {
@@ -1307,15 +1329,26 @@ fn many_rhos() {
         let policies = vec![
             //Policy::Ejector(target),
             //Policy::MooreG(target, Ranker::FCFS, Ranker::SRPT),
-            //Policy::DelayLarge(0.9999),
-            //Policy::FCFS,
+            //Policy::DelayLarge(0.999),
+            Policy::FCFS,
             Policy::SRPT,
-            Policy::SmallestLateSimple(Target::Time(600.0)),
-            Policy::SmallestLateSimple(Target::Time(1000.0)),
+            Policy::PSJF,
+            Policy::SmallestLateSimple(Target::Time(80.0)),
+            Policy::SmallestLateSimple(Target::Time(100.0)),
+            Policy::SmallestLateSimple(Target::Time(120.0)),
+            Policy::SmallestLateSimple(Target::Time(140.0)),
+            Policy::SmallestLateSimple(Target::Time(160.0)),
+            Policy::SLSPSJF(Target::Time(80.0)),
+            Policy::SLSPSJF(Target::Time(100.0)),
+            Policy::SLSPSJF(Target::Time(120.0)),
+            Policy::SLSPSJF(Target::Time(140.0)),
+            Policy::SLSPSJF(Target::Time(160.0)),
+            Policy::SLSPSJF(Target::Time(180.0)),
+            Policy::SLSPSJF(Target::Time(200.0)),
             //Policy::SmallestLate(target),
             //Policy::OldestUnexchangableMulti(target),
         ];
-        let rhos = vec![0.99];
+        let rhos = vec![0.9];
         let vars = vec![4.0];
         let fidelity = 100;
         let percentiles: Vec<f64> = (0..fidelity)
@@ -1399,24 +1432,8 @@ fn many_rhos() {
                                 .map(|c| (c.response_time - t).max(0.0))
                                 .sum();
                             println!("'{}',{}", p, total_tardiness / completions.len() as f64);
-                            if p == "SRPT" {
-                                let bound_tardiness: f64 = completions
-                                    .iter()
-                                    .map(|c| {
-                                        if c.data.unwrap() <= t {
-                                            0.0
-                                        } else {
-                                            c.response_time
-                                        }
-                                    })
-                                    .sum();
-                                println!(
-                                    "'SRPT based bound',{}",
-                                    bound_tardiness / completions.len() as f64
-                                );
-                            }
                         }
-                        if false {
+                        if true {
                             let arrivals: Vec<Arrival> = completionss
                                 .get(0)
                                 .expect("At least one policy")
@@ -1430,74 +1447,86 @@ fn many_rhos() {
                 }
                 if let Target::Percentile(perc) = target {
                     println!("policy,min,mean");
-                    for (completions, policy) in completionss.iter().zip(&policies) {
+                    for (completions, policy) in completionss.iter().zip(&policy_names) {
                         let index = ((completions.len() as f64) * perc) as usize;
                         let above = &completions[index..];
                         let sum_above: f64 = above.iter().map(|c| c.response_time).sum();
                         println!(
-                            "'{:?}',{},{}",
+                            "'{}',{},{}",
                             policy,
                             above[0].response_time,
                             sum_above / above.len() as f64
                         );
-                        if let Policy::SmallestLateSimple(Target::Time(threshold)) = policy {
-                            if let Some(srpt_index) = policy_names.iter().position(|n| n == &"SRPT")
-                            {
-                                {
-                                let srpt_completions = &completionss[srpt_index];
-                                let mut bound_tardiness: Vec<f64> = srpt_completions
-                                    .iter()
-                                    .map(|c| {
-                                        if c.data.unwrap() <= *threshold {
-                                            0.0
-                                        } else {
-                                            c.response_time + threshold
-                                        }
-                                    })
-                                    .collect();
-                                bound_tardiness.sort_by_key(|&f| n64(f));
-                                let above = &bound_tardiness[index..];
-                                let sum_above: f64 = above.iter().sum();
-                                println!(
-                                    "'SRPT based bound c={}',{},{}",
-                                    threshold,
-                                    above[0],
-                                    sum_above / above.len() as f64
-                                );
+                    }
+                }
+                // 3 part bound
+                let srpt_index = policies.iter().position(|&p| p == Policy::SRPT);
+                let psjf_index = policies.iter().position(|&p| p == Policy::PSJF);
+                let bound_picker = &|p| match p {
+                    Policy::SmallestLateSimple(Target::Time(threshold)) => {
+                        srpt_index.map(|s| (s, threshold))
+                    }
+                    Policy::SLSPSJF(Target::Time(threshold)) => psjf_index.map(|p| (p, threshold)),
+                    _ => None,
+                };
+                for &policy in &policies {
+                    if let Some((bound_index, threshold)) = bound_picker(policy) {
+                        let mut rng = StdRng::seed_from_u64(seed);
+                        let mut cases = vec![0, 0, 0, 0];
+                        // Map bound jobs to the bound distribution,
+                        let mut size_completions: Vec<&Completion> =
+                            completionss[bound_index].iter().collect();
+                        size_completions.sort_by_key(|c| n64(c.size));
+                        let mut bound_response_times: Vec<f64> = size_completions
+                            .iter()
+                            .enumerate()
+                            .map(|(i, c)| {
+                                let x = c.size;
+                                let work_seen = c.data.expect("has data").0;
+                                let wait = c.data.expect("has data").1.expect("has wait");
+                                let bound_response_time = c.response_time;
+                                if work_seen + x <= threshold {
+                                    if wait <= threshold {
+                                        cases[0] += 1;
+                                    } else {
+                                        cases[1] += 1;
+                                    }
+                                    work_seen + x
+                                } else if wait > threshold {
+                                    cases[3] += 1;
+                                    bound_response_time
+                                } else {
+                                    cases[2] += 1;
+                                    // Steady state response time
+                                    // Could be replaced by formula
+                                    let sample_fraction = 0.001;
+                                    let sample_num =
+                                        (sample_fraction * size_completions.len() as f64) as usize;
+                                    let sample_min = i.saturating_sub(sample_num);
+                                    let sample_max = (i + sample_num).min(size_completions.len());
+                                    let index = rng.gen_range(sample_min, sample_max);
+                                    threshold + size_completions[index].response_time
+                                    //threshold + bound_response_time
                                 }
-                                let mut combined_bound = vec![];
-                                let num_partitions = 1000000;
-                                let mut srpt_completions: Vec<&Completion> = completionss[srpt_index].iter().collect();
-                                srpt_completions.sort_by_key(|c| n64(c.size));
-                                let part_index = &|p| srpt_completions.len() * p / num_partitions;
-                                for part_num in 0..num_partitions {
-                                    let mut partition: Vec<&Completion> = srpt_completions
-                                        [part_index(part_num)..part_index(part_num + 1)].to_vec();
-                                    partition.sort_by_key(|c| n64(c.response_time));
-                                    let early_in_partition = partition
-                                        .iter()
-                                        .filter(|c| c.data.unwrap() <= *threshold)
-                                        .count();
-                                    combined_bound.extend(partition.iter().enumerate().map(
-                                        |(i, c)| {
-                                            if i < early_in_partition {
-                                                *threshold
-                                            } else {
-                                                c.response_time + threshold
-                                            }
-                                        },
-                                    ));
-                                }
-                                combined_bound.sort_by_key(|&f| n64(f));
-                                let above = &combined_bound[index..];
-                                let sum_above: f64 = above.iter().sum();
-                                println!(
-                                "'Weak SRPT Bound c={}',{},{}",
-                                threshold,
+                            })
+                            .collect();
+                        // Print out bound
+                        if let Target::Percentile(perc) = target {
+                            bound_response_times.sort_by_key(|&r| n64(r));
+                            let index = ((bound_response_times.len() as f64) * perc) as usize;
+                            let above = &bound_response_times[index..];
+                            let sum_above: f64 = above.iter().sum();
+                            let probs: Vec<f64> = cases
+                                .iter()
+                                .map(|&c| c as f64 / bound_response_times.len() as f64)
+                                .collect();
+                            println!(
+                                "'Bound for {:?}',{},{} ({:?})",
+                                policy,
                                 above[0],
-                                sum_above / above.len() as f64
-                                );
-                            }
+                                sum_above / above.len() as f64,
+                                probs,
+                            );
                         }
                     }
                 }
