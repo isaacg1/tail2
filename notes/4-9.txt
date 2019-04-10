@@ -5,3 +5,7 @@ Else: T_j <= c + T_j^{SRPT}
 If the metric only cares about mean (e.g. Tardiness), then we can replace the last bound with:
 Else: T_j <= c + T_{ss}^{SRPT}
 this isn't much better, but it's easier to analyze.
+The 'else' can also be changed to the transient analysis in principle, which is even better.
+
+If we care about something else (e.g. mean above percentile), then that doesn't work? I'm not sure.
+We can do the whole distribution if we switch to PSJF.
