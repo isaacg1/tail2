@@ -9,3 +9,18 @@ The 'else' can also be changed to the transient analysis in principle, which is 
 
 If we care about something else (e.g. mean above percentile), then that doesn't work? I'm not sure.
 We can do the whole distribution if we switch to PSJF.
+
+Can we switch from the distribution above the threshold to the mean above the threshold?
+
+For the SRPT/Tardiness case, yes. We only care about mean at that point.
+
+For the PSJF/Mean above percentile?
+
+Arbitrarily altering the distribution above c in a way that does not change the mean above c
+can increase the mean of the top p fraction by at most a small amount.
+
+Let T^p be the pth percentile.
+
+Change <= (P(T>c)/p)*(T^p-c)
+
+This bound could certainly be improved, but it's pretty good already. Also, we can use the SRPT based bound, because we only care about mean above c, not the specific distribution.

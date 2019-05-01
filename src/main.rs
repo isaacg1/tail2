@@ -1259,62 +1259,9 @@ fn simulate(
     */
     completions
 }
-
 /*
-fn single_percentile() {
-    let percentile = 0.99;
-    let seed = 0;
-    let time = 1e6;
-    let policies = vec![
-        Policy::FCFS,
-        Policy::SRPT,
-        Policy::FB,
-        Policy::DelayLarge(percentile),
-        Policy::DelayLargeOrOld(percentile, percentile),
-        Policy::DelayLargeOrOld(percentile, percentile + (1.0 - percentile) * 0.25),
-        Policy::DelayLargeOrOld(percentile, percentile + (1.0 - percentile) * 0.5),
-        Policy::DelayLargeOrOld(percentile, percentile + (1.0 - percentile) * 0.75),
-        Policy::DelayLargeOrOld(percentile, 1.0),
-        Policy::DynamicLargeOrOld(percentile),
-        Policy::MooreSRPT(percentile),
-        Policy::MooreFCFS(percentile),
-    ];
-    println!("per={},seed={},time={}", percentile, seed, time);
-    println!(
-        "policies: {}",
-        policies
-            .iter()
-            .map(|p| format!("{:?}", p))
-            .collect::<Vec<String>>()
-            .join(" ")
-    );
-    for rho in vec![0.3, 0.5, 0.7, 0.9, 0.99] {
-        for var in vec![1.0, 2.0, 4.0, 10.0] {
-            let dist = Size::balanced_hyper(var);
-            println!("     rho={},var={}", rho, var);
-            let mut results = vec![];
-            for &p in &policies {
-                let mut completions = simulate(time, rho, &dist, p, seed);
-                completions.sort_by_key(|c| n64(c.response_time));
-                let index = (completions.len() as f64 * percentile) as usize;
-                results.push(completions[index].response_time);
-            }
-            println!(
-                "     {}",
-                results
-                    .iter()
-                    .map(|f| format!("{}", f))
-                    .collect::<Vec<String>>()
-                    .join(",")
-            );
-            let (best_time, best_policy) = results
-                .iter()
-                .zip(&policies)
-                .min_by_key(|(r, _)| n64(**r))
-                .unwrap();
-            println!("{:?} {}", best_policy, best_time);
-        }
-    }
+fn psjf_mean(x: f64, dist: &Size) {
+    if let Size::Hyper(low_mean, high_mean,
 }
 */
 
@@ -1330,26 +1277,19 @@ fn many_rhos() {
             //Policy::Ejector(target),
             //Policy::MooreG(target, Ranker::FCFS, Ranker::SRPT),
             //Policy::DelayLarge(0.999),
-            Policy::FCFS,
-            Policy::SRPT,
+            //Policy::FCFS,
+            //Policy::SRPT,
             Policy::PSJF,
-            Policy::SmallestLateSimple(Target::Time(80.0)),
-            Policy::SmallestLateSimple(Target::Time(100.0)),
-            Policy::SmallestLateSimple(Target::Time(120.0)),
-            Policy::SmallestLateSimple(Target::Time(140.0)),
-            Policy::SmallestLateSimple(Target::Time(160.0)),
-            Policy::SLSPSJF(Target::Time(80.0)),
-            Policy::SLSPSJF(Target::Time(100.0)),
-            Policy::SLSPSJF(Target::Time(120.0)),
-            Policy::SLSPSJF(Target::Time(140.0)),
-            Policy::SLSPSJF(Target::Time(160.0)),
-            Policy::SLSPSJF(Target::Time(180.0)),
-            Policy::SLSPSJF(Target::Time(200.0)),
+            //Policy::SmallestLateSimple(Target::Time(160.0)),
+            //Policy::SmallestLateSimple(Target::Time(170.0)),
+            //Policy::SmallestLateSimple(Target::Time(180.0)),
+            //Policy::SmallestLateSimple(Target::Time(190.0)),
+            //Policy::SLSPSJF(Target::Time(170.0)),
             //Policy::SmallestLate(target),
             //Policy::OldestUnexchangableMulti(target),
         ];
         let rhos = vec![0.9];
-        let vars = vec![4.0];
+        let vars = vec![1.0];
         let fidelity = 100;
         let percentiles: Vec<f64> = (0..fidelity)
             .map(|f| 0.99 + f64::from(f) * (0.01 / f64::from(fidelity)))
@@ -1358,7 +1298,13 @@ fn many_rhos() {
             for &var in &vars {
                 let dist = Size::balanced_hyper(var);
                 //let dist = Size::Bimodal(1.0, var, 0.995);
-                println!("rho={},var={},mean={}", rho, var, dist.mean());
+                println!(
+                    "rho={},var={},mean={},dist={:?}",
+                    rho,
+                    var,
+                    dist.mean(),
+                    dist
+                );
                 if print_percentiles {
                     println!(
                         ",{}",
@@ -1392,6 +1338,11 @@ fn many_rhos() {
                     .iter_mut()
                     .for_each(|completions| completions.sort_by_key(|c| n64(c.response_time)));
                 for (completions, p) in completionss.iter().zip(&policy_names) {
+                for target in vec![5.0, 10.0, 20.0, 40.0] {
+                    let index = completions.iter().position(|c| c.response_time > target).unwrap();
+                    println!("{} {:.4}: {:.4}", p, target, 1.0 - index as f64 / completions.len() as f64);
+
+                }
                     let mut results = vec![];
                     for &percentile in &percentiles {
                         let index = (completions.len() as f64 * percentile) as usize;
@@ -1462,6 +1413,18 @@ fn many_rhos() {
                 // 3 part bound
                 let srpt_index = policies.iter().position(|&p| p == Policy::SRPT);
                 let psjf_index = policies.iter().position(|&p| p == Policy::PSJF);
+                if let Some(psjf_index) = psjf_index {
+                    let target_size = 4.0;
+                    let mut psjf_size: Vec<f64> = completionss[psjf_index]
+                        .iter()
+                        .filter(|c| c.size > 0.9*target_size && c.size < 1.1*target_size)
+                        .map(|c| c.response_time)
+                        .collect();
+                    psjf_size.sort_by_key(|&f| n64(f));
+                    assert!(psjf_size.len() > 100);
+                    let index = (psjf_size.len() as f64 * 0.99) as usize;
+                    println!("99th of size {:.1} under PSJF: {}", target_size, psjf_size[index]);
+                }
                 let bound_picker = &|p| match p {
                     Policy::SmallestLateSimple(Target::Time(threshold)) => {
                         srpt_index.map(|s| (s, threshold))
@@ -1505,7 +1468,13 @@ fn many_rhos() {
                                     let sample_min = i.saturating_sub(sample_num);
                                     let sample_max = (i + sample_num).min(size_completions.len());
                                     let index = rng.gen_range(sample_min, sample_max);
-                                    threshold + size_completions[index].response_time
+                                    let sample_mean: f64 = size_completions[sample_min..sample_max]
+                                        .iter()
+                                        .map(|c| c.response_time)
+                                        .sum::<f64>()
+                                        / (sample_max - sample_min) as f64;
+                                    threshold + sample_mean
+                                    //threshold + size_completions[index].response_time
                                     //threshold + bound_response_time
                                 }
                             })
@@ -1521,10 +1490,13 @@ fn many_rhos() {
                                 .map(|&c| c as f64 / bound_response_times.len() as f64)
                                 .collect();
                             println!(
-                                "'Bound for {:?}',{},{} ({:?})",
+                                "'Bound for {:?}',{},{},{} ({:?})",
                                 policy,
                                 above[0],
                                 sum_above / above.len() as f64,
+                                sum_above / above.len() as f64
+                                    + (above[0] - threshold).max(0.0) * (probs[2] + probs[3])
+                                        / (1.0 - perc),
                                 probs,
                             );
                         }
