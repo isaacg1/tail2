@@ -1338,11 +1338,18 @@ fn many_rhos() {
                     .iter_mut()
                     .for_each(|completions| completions.sort_by_key(|c| n64(c.response_time)));
                 for (completions, p) in completionss.iter().zip(&policy_names) {
-                for target in vec![5.0, 10.0, 20.0, 40.0] {
-                    let index = completions.iter().position(|c| c.response_time > target).unwrap();
-                    println!("{} {:.4}: {:.4}", p, target, 1.0 - index as f64 / completions.len() as f64);
-
-                }
+                    for target in vec![5.0, 10.0, 20.0, 40.0] {
+                        let index = completions
+                            .iter()
+                            .position(|c| c.response_time > target)
+                            .unwrap();
+                        println!(
+                            "{} {:.4}: {:.4}",
+                            p,
+                            target,
+                            1.0 - index as f64 / completions.len() as f64
+                        );
+                    }
                     let mut results = vec![];
                     for &percentile in &percentiles {
                         let index = (completions.len() as f64 * percentile) as usize;
@@ -1417,13 +1424,16 @@ fn many_rhos() {
                     let target_size = 4.0;
                     let mut psjf_size: Vec<f64> = completionss[psjf_index]
                         .iter()
-                        .filter(|c| c.size > 0.9*target_size && c.size < 1.1*target_size)
+                        .filter(|c| c.size > 0.9 * target_size && c.size < 1.1 * target_size)
                         .map(|c| c.response_time)
                         .collect();
                     psjf_size.sort_by_key(|&f| n64(f));
                     assert!(psjf_size.len() > 100);
                     let index = (psjf_size.len() as f64 * 0.99) as usize;
-                    println!("99th of size {:.1} under PSJF: {}", target_size, psjf_size[index]);
+                    println!(
+                        "99th of size {:.1} under PSJF: {}",
+                        target_size, psjf_size[index]
+                    );
                 }
                 let bound_picker = &|p| match p {
                     Policy::SmallestLateSimple(Target::Time(threshold)) => {
@@ -1537,6 +1547,82 @@ fn ratio() {
         results[1], results[0], target, rho, high, prob
     );
 }
+
+fn simple() {
+    let seed = 0;
+    let time = 1e6;
+    println!("seed={}, time={}", seed, time);
+    let threshold_percentile = true;
+    let threshold_cutoff = false;
+    let hinge_percentile = false;
+    let hinge_cutoff = false;
+    let policies = vec![
+        Policy::Ejector(Target::Time(17.0)),
+        Policy::Ejector(Target::Time(39.0)),
+        Policy::FCFS,
+        Policy::SRPT,
+        //Policy::SmallestLateSimple(Target::Time(160.0)),
+    ];
+    let rhos = vec![0.9];
+    let vars = vec![1.0];
+    for rho in rhos {
+        for &var in &vars {
+            let dist = Size::balanced_hyper(var);
+            //let dist = Size::Bimodal(1.0, var, 0.995);
+            println!(
+                "rho={},var={},mean={},dist={:?}",
+                rho,
+                var,
+                dist.mean(),
+                dist
+            );
+            let mut completionss: Vec<Vec<Completion>> = policies
+                .iter()
+                .map(|p| simulate(time, rho, &dist, *p, seed))
+                .collect();
+            completionss
+                .iter_mut()
+                .for_each(|completions| completions.sort_by_key(|c| n64(c.response_time)));
+            let fidelity = 50;
+            let min = 1.0;
+            let max = 200.0;
+            let cs: Vec<f64> = (0..fidelity+1).map(|i| min * (max/min).powf(i as f64/fidelity as f64)).collect();
+            println!(
+                ",{}",
+                cs.iter()
+                    .map(|c| format!("{}", c))
+                    .collect::<Vec<String>>()
+                    .join(",")
+            );
+            for (completions, p) in completionss.iter().zip(&policies) {
+                if threshold_percentile {
+                    let percentiles: Vec<f64> = cs
+                        .iter()
+                        .map(|c| {
+                            let result =
+                                completions.binary_search_by_key(&n64(*c), |comp| n64(comp.response_time));
+                            let index = match result {
+                                Ok(i) => i,
+                                Err(i) => i,
+                            };
+                            (completions.len() - index) as f64 / completions.len() as f64
+                        })
+                        .collect();
+                    println!(
+                        "{:?},{}",
+                        p,
+                        percentiles
+                            .iter()
+                            .map(|c| format!("{}", c))
+                            .collect::<Vec<String>>()
+                            .join(",")
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn main() {
-    many_rhos();
+    simple();
 }
