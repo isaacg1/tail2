@@ -1552,16 +1552,17 @@ fn simple() {
     let seed = 0;
     let time = 1e6;
     println!("seed={}, time={}", seed, time);
-    let threshold_percentile = true;
+    let threshold_percentile = false;
     let threshold_cutoff = false;
-    let hinge_percentile = false;
+    let hinge_percentile = true;
     let hinge_cutoff = false;
     let policies = vec![
-        Policy::Ejector(Target::Time(17.0)),
-        Policy::Ejector(Target::Time(39.0)),
+        //Policy::Ejector(Target::Time(17.0)),
+        //Policy::Ejector(Target::Time(39.0)),
         Policy::FCFS,
         Policy::SRPT,
-        //Policy::SmallestLateSimple(Target::Time(160.0)),
+        Policy::SmallestLateSimple(Target::Time(30.0)),
+        Policy::SmallestLateSimple(Target::Time(60.0)),
     ];
     let rhos = vec![0.9];
     let vars = vec![1.0];
@@ -1587,13 +1588,26 @@ fn simple() {
             let min = 1.0;
             let max = 200.0;
             let cs: Vec<f64> = (0..fidelity+1).map(|i| min * (max/min).powf(i as f64/fidelity as f64)).collect();
-            println!(
-                ",{}",
-                cs.iter()
-                    .map(|c| format!("{}", c))
-                    .collect::<Vec<String>>()
-                    .join(",")
-            );
+            if threshold_percentile || hinge_cutoff {
+                println!(
+                    ",{}",
+                    cs.iter()
+                        .map(|c| format!("{}", c))
+                        .collect::<Vec<String>>()
+                        .join(",")
+                );
+            }
+            let percentiles: Vec<f64> = (0..fidelity+1).map(|i| 1.0 - 0.0001.powf(i as f64/fidelity as f64)).collect();
+            //let percentiles: Vec<f64> = vec!(0.99, 0.999);
+            if hinge_percentile {
+                println!(
+                    ",{}",
+                    percentiles.iter()
+                        .map(|c| format!("{}", c))
+                        .collect::<Vec<String>>()
+                        .join(",")
+                );
+            }
             for (completions, p) in completionss.iter().zip(&policies) {
                 if threshold_percentile {
                     let percentiles: Vec<f64> = cs
@@ -1612,6 +1626,23 @@ fn simple() {
                         "{:?},{}",
                         p,
                         percentiles
+                            .iter()
+                            .map(|c| format!("{}", c))
+                            .collect::<Vec<String>>()
+                            .join(",")
+                    );
+                }
+                if hinge_percentile {
+                    let means: Vec<f64> = percentiles
+                        .iter()
+                        .map(|perc| {
+                            let index = (perc * completions.len() as f64) as usize;
+                            completions[index..].iter().map(|c| c.response_time).sum::<f64>()/(completions.len() - index) as f64
+                        }).collect();
+                    println!(
+                        "{:?},{}",
+                        p,
+                        means
                             .iter()
                             .map(|c| format!("{}", c))
                             .collect::<Vec<String>>()
