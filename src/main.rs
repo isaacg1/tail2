@@ -905,10 +905,11 @@ impl Policy {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 enum Size {
     Exp(f64),
     Pareto(f64),
+    BoundedPareto(f64, f64),
     Hyper(f64, f64, f64),
     Det(f64),
     Bimodal(f64, f64, f64),
@@ -922,6 +923,12 @@ impl Distribution<f64> for Size {
                 dist.sample(rng)
             }
             Size::Pareto(alpha) => rng.gen_range(0., 1.).powf(-1. / alpha),
+            Size::BoundedPareto(alpha, bound) => loop {
+                let out = rng.gen_range(0., 1.).powf(-1. / alpha);
+                if out <= bound {
+                    return out;
+                }
+            },
             Size::Hyper(low, high, low_prob) => {
                 let mean = if rng.gen_range(0., 1.) < low_prob {
                     low
@@ -953,6 +960,10 @@ impl Size {
         match *self {
             Size::Exp(lambda) => 1.0 / lambda,
             Size::Pareto(alpha) => alpha / (alpha - 1.0),
+            Size::BoundedPareto(alpha, bound) => {
+                1.0 / (1.0 - bound.powf(-alpha)) * alpha / (alpha - 1.0)
+                    * (1.0 - bound.powf(1.0 - alpha))
+            }
             Size::Hyper(low, high, low_prob) => low * low_prob + high * (1.0 - low_prob),
             Size::Bimodal(low, high, low_prob) => low * low_prob + high * (1.0 - low_prob),
             Size::Det(x) => x,
@@ -1565,15 +1576,12 @@ fn simple() {
         Policy::SmallestLateSimple(Target::Time(60.0)),
     ];
     let rhos = vec![0.9];
-    let vars = vec![1.0];
+    let dists = vec![Size::Exp(1.0), Size::BoundedPareto(1.5, 1e6)];
     for rho in rhos {
-        for &var in &vars {
-            let dist = Size::balanced_hyper(var);
-            //let dist = Size::Bimodal(1.0, var, 0.995);
+        for &dist in &dists {
             println!(
-                "rho={},var={},mean={},dist={:?}",
+                "rho={},mean={},dist={:?}",
                 rho,
-                var,
                 dist.mean(),
                 dist
             );
